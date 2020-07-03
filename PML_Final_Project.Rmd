@@ -1,0 +1,399 @@
+---
+title: "Practical Machine Learning - Final Project"
+author: "Helmar Martens"
+date: "7/2/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+####Introduction
+
+This project creates and evaluates a series of predictive models to predict how well a specific weight-lifting exercise is performed by the subjects.  
+The following steps have been performed to accomplish our goal
+
+1. Import the data
+2. Inspect the data
+3. Check the class of all variables on both datasets
+4. Analyze distribuition of NAs with in the full data set
+5. Perform data type conversion, as needed
+6. Split the data into three subsets
+7. Exploratory data analysis
+     + 7.a Analyzie number of NAs in the new dataset
+8. Impute value to NAs - Median method
+9. Address low variance variables
+10. Handle highly correlated variables
+11. Model building
+   + 11.a) LDA Model
+   + 11.b) Decision Tree - Default values
+   + 11.c) Decision Tree - With Cross Validation and additional parameters
+   + 11.d) Gradient Boosting Machine - GBM
+   + 11.e) Random Forest
+   
+   Conclusion
+
+At the end of this project we produce five models and capture their accuracy.  Training and testing data is used to tune and evaluate the models. 
+Finally, we use the validation data to validate the best model model with unseen data.
+
+The best performant modek, Random Forest shows the following accuracy:
+
+Data Set     |   Accuracy
+-------------| ------------
+Training     |   0.9702724
+Testing      |   0.9819418
+Validation   |   0.980882
+
+
+```{r 
+#import the required libraries
+library(caret)
+library(kernlab)
+library(Hmisc)
+library(corrplot)
+library(e1071)
+}
+```
+
+```{r
+# Clear all the variables from the workspace because R will need all available resources to run Random Forest. 
+rm(list = ls())
+```
+
+#### 1) Import the data.
+ Use read.table function with the following parameters:
+ 
+1. na.strings = c("", "NA", "#DIV/0!") -->  Assign NA to all empty values
+2. stringsAsFactors = F     -->  Prevents R from creating factors out of numeric or character variables. 
+
+* Download the files to the Current Working Directory
+
+**NOTE:  R is not consistent when importing this data. Sometimes it imports all variables as integer or numeric, sometimes several variables are set to characters or even as logic **
+```{r 
+
+            
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", "./pml-training.csv")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", "./pml-testing.csv")
+pml_training   <- read.table("./pml-training.csv", header=TRUE, sep = "," , na.strings = c("", "NA"), stringsAsFactors = F, quote = "\"")
+final_testing  <- read.table("./pml-testing.csv",  header=TRUE, sep = "," , na.strings = c("", "NA"), stringsAsFactors = F, quote = "\"")
+```
+
+#### 2) Inspect the data
+```{r
+dim(pml_training)     # 19,622
+dim(final_testing)    # 20
+head(pml_training)
+str(final_testing)
+str(pml_training)
+```
+
+#### 3) Check the class of all variables on both datasets
+
+```{r 
+sapply(pml_training, class)
+sapply(final_testing, class)
+```
+**There could be a mix of different classes, as mentioned in item 1**
+
+#### 4) Analyze distribuition of NAs with in the full data set 
+```{r
+head(colSums(!is.na(pml_training)),15)
+```
+Assessment:  The result of the code above shows that a multitude of variables have a large number of NAs: 19216, since only 406 records have a value. This is consistent accross the entire dataset.
+
+#### 5) Perform data type conversion, as needed
+Convert all non-numeri columns to numeric, since R sets a multiple number of variables to either string or logi even when it should be numberic. If R creates the dataframe with all numeric variables, then the code below will no change any data type.  
+
+```{r
+for(i in 1:dim(final_testing)[2]){
+  classType <- class(final_testing[,i])
+  if (i > 7){   # The first few variables should remain as character
+    if( classType != "numeric"){
+      final_testing[,i] <- as.numeric(final_testing[,i])
+    }
+  }
+}
+sapply(final_testing, class)
+
+for(i in 1:dim(pml_training)[2]){
+  classType <- class(pml_training[,i])
+  if (i > 7 & i != 160){  # The first few variables should remain as character as well as the classe output variable
+    if(classType != "numeric"){
+      pml_training[,i] <- as.numeric(pml_training[,i])
+    }
+  }
+}
+sapply(pml_training, class)
+```
+At this point of the execution all variables will be of numeric type, except the first seven columns of the data set, which are actually characters. 
+
+#### 6) Split the data into three subsets: 
+##### training, testing, and validation
+
+```{r
+set.seed(3715)
+inBuild <- createDataPartition(y=pml_training$classe, p=0.8, list=FALSE)
+validation <- pml_training[-inBuild,]      #  20% of the data will be reserved for validation
+buildData <-  pml_training[inBuild,]       #  80% of the data is used to create new traing and testing sets
+
+dim(inBuild)      # 80% of total data set = 15,699
+dim(validation)   # 20% of total data set =  3,923
+dim(buildData)    # 80% of total data set = 15,699
+
+# Need to set the seed again, because the previous call to set.seed as valid only for that following createDataPartition
+set.seed(3715)  
+inTrain  <- createDataPartition(y=buildData$classe, p=0.7, list=FALSE)
+training <- buildData[inTrain,]         # 70% of the 80% portion of the data will be used for training
+testing  <- buildData[-inTrain,]        # 30% of the 80% portion of the data will be used for testing
+
+#We endup with the following number of variables in each dataset
+dim(inTrain)    # 10,992
+dim(training)   # 10,992
+dim(testing)    # 4,707
+```
+
+#### 7) Exploratory data analysis
+Verify the distribuition of classes class representation of the output variable) acrross the data set 
+```{r
+table(buildData$classe)    / 15699 * 100
+table(pml_training$classe) / 19622 * 100
+table(training$classe)     / 10989 * 100
+```
+
+The newly created datasets keept the same distribution across the three datasets. 
+We can see that the largest class is "A" wth 28% and the smallest "D" with 16%
+
+##### 7.a) Analyzie number of NAs in the new dataset
+```{r
+colSums(!is.na(training)) 
+colSums(!is.na(testing)) 
+colSums(!is.na(validation))
+```
+
+Assessment:  Across the dataset, the majority of the predictors have a small percentage of records with value.  The majority of the records are NA
+This represents a problem because the predictors are highly umbalanced, they will have low variance, consequently reducing their predictive power.
+
+Additionally, six variables have no observations with a value.  Those need to be removeMethod
+```{r
+Get index of variables to be removed from all three datasets. 
+to_remove <- which(names(training) %in% c("kurtosis_yaw_belt", "skewness_yaw_belt","kurtosis_yaw_dumbbell", "skewness_yaw_dumbbell","kurtosis_yaw_forearm", "skewness_yaw_forearm"))
+dim(training)  # 160 vars
+training   <- training[,  -to_remove]
+testing    <- testing[,   -to_remove]
+validation <- validation[,-to_remove]
+dim(validation) # 154 vars
+```
+#### 8) Impute value to NAs - Median method
+  
+Impute the median value of each variable to the records missing values, except the output value. 
+
+**NOTE the impute KNN method does not work for this dataset. **
+That is because KNN impute function does not work because we have way to many NAs distributed across a multitude of variables. KNN Imput function needs at least the same amount of observations with values in the dataset as the number of NAs we are trying to impute.
+ 
+```{r
+# The section of code below will simultaneously imput values to missing values and standardize the variables.
+# We address all three datasets so that they remain consistent. 
+preObj_training_median    <- preProcess(training[,-154], method=c("medianImpute"))
+preObj_testing_median     <- preProcess(testing[,-154], method=c("medianImpute"))
+preObj_validation_median <- preProcess(validation[,-154], method=c("medianImpute"))
+
+training_median_input   <- predict(preObj_training_median, training)
+testingt_median_input   <- predict(preObj_testing_median, testing)
+validation_median_input <- predict(preObj_validation_median, validation)
+
+head(training_median_input,50)
+colSums(is.na(training_median_input)) 
+```
+
+Up to this point of the execution we have a dataset containing:
+1. 153 predictors and 1 output variable
+2. no missing values - NAs have been imputed the median value
+
+
+#### 9) Address low variance variables
+Let's identify the variables with very low variance.  Such variables provide little to no contribuition to predict the outcome variable. 
+Therefore, they should be removed from the dataset, which will make the model simpler.  A simple model is preferrable to a complex model. 
+```{r
+nzv_training <- nearZeroVar(training_median_input)
+length(nzv_training)  # 95 variables have been identified as Near Zero Variance variables. 
+
+# Remove the Near Zero Variance variables from the datasets
+training_median_high_variance <- training_median_input[, -nzv_training]
+
+# We are not going to run the nearZeroVar function on testing and validation datasets because they might identify different variables. 
+# Instead, remove from these datasets the same variables identified in the training set
+testing_median_high_variance     <-  testingt_median_input[, -nzv_training]  
+validation_median_high_variance  <-  validation_median_input[, -nzv_training] 
+
+str(training_median_high_variance)
+dim(validation_median_high_variance)  # 59 variables are left in the dataset - These have higher variance 
+dim(training_median_high_variance)
+dim(testing_median_high_variance)
+head(validation_median_high_variance)
+str(training_median_high_variance)
+```
+
+#### 10) Handle highly correlated variables
+Use findCorrelation function from the caret package
+```{r
+Remove the non-numeric variables from the dataset so that we can invoke the findCorrelation function
+str(training_median_high_variance)
+training_high_corr <- findCorrelation(cor(training_median_high_variance[,-c(1,2,5,59)]), cutoff = .75, verbose = FALSE)
+training_high_corr # 19 variables are identified as having a correlation coefficient higher than .75
+# Remove these highly correlated variables from the datasets. 
+training_low_corr_vars <- training_median_high_variance[,-training_high_corr]
+str(training_low_corr_vars)
+# Check the actual correlation of the selected variables.
+actual_correlation <- cor(training_low_corr_vars[,-c(1,2, 40)])
+# Show the actual cororelation of the updated dataset
+summary(actual_correlation[upper.tri(actual_correlation)])
+ 
+# Remove the same variables from both testing and validation data sets. 
+testing_low_corr_vars <- testing_median_high_variance[,-training_high_corr]
+validation_low_corr_vars <- validation_median_high_variance[,-training_high_corr]
+
+```
+The removal of highly correlatated variables concludes the data transformation and preparation for model fitting.
+The list below describe the current state of the data sets, which are consistent with each other because all the transformation steps were applied to all data sets. 
+
+1. 39 predictors and one output variable
+2. no missing values
+3. all of the numeric variables standardized
+4. no near zero variance variables
+5. no highly correlated variables
+
+#### 11) Model building
+We will evaluate a couple of different models to compare their accuracy and then select the best one from the group. 
+We will evaluate the following models
+
+- LDA model
+- Decision Tree with defalt parameters
+- Decision Tree with cross validation, max depth and other parameters
+- Gradient Boosting Machine - GBM
+- Random Forest
+
+The following variables will be either included or excluded from the models during the tuning phase:
+
+- X 
+- raw_timestamp_part_1 
+- num_window
+
+These variables do not add any predictor power to the model because they represent IDs, windows, and date. Date is highly dependent in nature. 
+
+
+
+##### 11.a) LDA model
+```{r
+mod_lda <- train(classe ~ .-X -raw_timestamp_part_1 -num_window, method='lda', data=training_low_corr_vars)
+
+# after running the model there are 26 warning indicating that there are collinear variables. 
+# so let's use preProc to direct the model to perform Principal Component Analysis and use its resulting new variables to fit the data. 
+# Let's run the model again wiuth the additional parameter: preProc="pca"
+
+mod_lda <- train(classe ~ .-X -raw_timestamp_part_1 , method='lda',  preProc="pca"  data=training_low_corr_vars)
+# The warnings are gone. 
+
+mod_lda$results  
+pred_lda <- predict(mod_lda, newdata=testing_low_corr_vars)
+mean(pred_lda == testing_low_corr_vars$classe) 
+# Accuracy on testing data set = 0.99
+# Show matrix of results per category
+table(pred_lda, testing_low_corr_vars$classe)
+
+
+# preProc="pca" parameter.  In this case, PCA Aactually decreases the model accuracy 
+
+Data Set     |   Accuracy with PCA |  No PCA
+------------------------------------------------
+Training     |   0.5160143         | 0.6958259
+Testing      |   0.5083918         | 0.6938602
+
+
+```
+
+##### 11.b) Decision Tree - Default values
+```{r
+
+0.7560175
+default_mod_tree <- train(classe ~ .-X -raw_timestamp_part_1 -num_window, method='rpart', data = training_low_corr_vars)
+default_mod_tree$results 
+default_pred_tree <- predict(default_mod_tree, newdata = testing_low_corr_vars)
+mean(default_pred_tree == testing$classe)
+table(pred_tree, testing_median_high_variance$classe)
+
+Data Set      |   Accuracy with PCA |  No PCA
+-------------------------------------------------
+ Training     | 0.3374933           | 0.5366398
+ Testing      | 0.3316337           | 0.5302741
+
+```
+
+##### 11.c) Decision Tree - With Cross Validation and additional parameters
+```{r
+# The folloing variables could be removed from the data set, but it does not improve accuracy...
+X, raw_timestamp_part_1 num_window 
+# No preProc="pca" this time...
+mod_tree <- train(classe ~ .-X -raw_timestamp_part_1 -num_window , method='rpart', trControl = trainControl("cv", number = 10 ), tuneLength = 10, maxdepth = 10, data=training_low_corr_vars)
+mod_tree$results  
+summary(mod_tree)
+plot(mod_tree$finalModel, uniform = TRUE, main="Classification Tree")
+text(mod_tree$finalModel, use.n=TRUE, all=TRUE, cex=.8)
+pred_tree <- predict(mod_tree, newdata = testing_low_corr_vars)
+mean(pred_tree == testing$classe) # Model accuracy rate on our testing data
+table(pred_tree, testing_median_high_variance$classe)
+
+
+Data Set     |   Accuracy
+--------------------------
+Training     |   0.7035004
+Testing      |   0.6694285
+
+```
+
+##### 11.d) Gradient Boosting Machine - GBM
+```{r
+# add preProc="pca" parameter back
+mod_gbm <- train(classe ~ .-X -raw_timestamp_part_1 , method='gbm', trControl = trainControl("cv", number = 10), tuneLength = 10, preProc="pca", 
+                 n.trees = 10000, shrinkage = 0.01, interaction.depth = 4, data=training_low_corr_vars)
+mod_gbm$results  # 0.8429
+ 
+pred_gbm <- predict(mod_gbm, newdata=testing_low_corr_vars)
+mean( pred_gbm == testing_low_corr_vars$classe) 
+# On the testing data accuracy increases to 0.99
+table(pred_gbm, testing_low_corr_vars$classe)
+
+Data Set     |   Accuracy
+--------------------------
+Training     |   0.8429
+Testing      |   0.8410
+
+```
+
+##### 11.e) Random Forest
+
+```{r
+# Random Forest
+start <- Sys.time()
+mod_rf <- train(classe ~ ., method='rf', data=training_low_corr_vars, preProc="pca")
+end <- Sys.time()
+pred <- predict(mod_rf, newdata=testing_low_corr_vars)
+execution_time <- end - start
+execution_time  # Time difference of 22.47763 mins
+mod_rf$results   
+# Use validation dataset - Just once
+
+
+Data Set     |   Accuracy
+--------------------------
+Training     |   0.9702724
+Testing      |   0.9819418
+Validation   |   0.980882
+
+
+
+
+
+
+
+```
+
