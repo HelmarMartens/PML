@@ -236,6 +236,7 @@ The following steps have been performed to accomplish our goal</p>
 </tr>
 </tbody>
 </table>
+<p>Prediction on the 20 records:</p>
 <pre class="{r"><code>#import the required libraries
 library(caret)
 library(kernlab)
@@ -526,6 +527,7 @@ Testing      |   0.8410
 <h5>11.e) Random Forest</h5>
 <pre class="{r"><code># Random Forest
 start &lt;- Sys.time()
+
 mod_rf &lt;- train(classe ~ ., method='rf', data=training_low_corr_vars, preProc=&quot;pca&quot;)
 end &lt;- Sys.time()
 pred &lt;- predict(mod_rf, newdata=testing_low_corr_vars)
@@ -542,7 +544,13 @@ Testing      |   0.9819418
 Validation   |   0.980882
 
 
+Predict result on the downloaded testing dataset with 20 records: 
 
+pred &lt;- predict(mod_rf, newdata=final_testing)
+pred$results
+
+ [1] B A A A A E D B A A B A B A E E A B B B
+Levels: A B C D E
 
 
 
